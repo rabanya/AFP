@@ -749,6 +749,381 @@ To address these limitations, consider adding:
 - **Diversification requirements**: Minimum number of assets
 - **Stress testing**: Performance evaluation under extreme market conditions
 
+## Reward Function Design
+
+### Advanced Reward Function Designs
+
+Beyond the basic Sharpe ratio, modern portfolio optimization requires sophisticated reward functions that capture growth, risk, and leverage considerations. Here are research-backed approaches:
+
+#### Multi-Objective Utility Functions
+
+```python
+def advanced_portfolio_reward(portfolio_returns, benchmark_returns, transaction_costs=None, leverage=None):
+    """
+    Multi-objective reward function capturing growth, risk, and leverage
+    """
+    # 1. Growth Component - Sortino Ratio (downside-focused)
+    excess_returns = portfolio_returns - benchmark_returns
+    downside_returns = excess_returns[excess_returns < 0]
+    sortino_ratio = excess_returns.mean() / (downside_returns.std() + 1e-8)
+
+    # 2. Risk Component - Maximum Drawdown Penalty
+    cumulative = torch.cumprod(1 + portfolio_returns, dim=0)
+    running_max = torch.maximum.accumulate(cumulative)
+    drawdowns = (cumulative - running_max) / running_max
+    max_drawdown = drawdowns.min()
+
+    # 3. Leverage Component - Position Concentration Penalty
+    if leverage is not None:
+        concentration_penalty = torch.mean(leverage ** 2)  # Penalize concentrated positions
+    else:
+        concentration_penalty = 0
+
+    # 4. Transaction Cost Component
+    if transaction_costs is not None:
+        turnover_penalty = transaction_costs.mean()
+    else:
+        turnover_penalty = 0
+
+    # Multi-objective weighted combination
+    w_growth, w_risk, w_leverage, w_costs = 0.4, 0.3, 0.2, 0.1
+
+    reward = (w_growth * sortino_ratio +
+              w_risk * (1 / (1 + abs(max_drawdown))) +  # Higher reward for lower drawdown
+              w_leverage * (1 / (1 + concentration_penalty)) +  # Penalize concentration
+              w_costs * (1 / (1 + turnover_penalty)))  # Penalize high costs
+
+    return reward
+```
+
+#### Utility-Based Reward Functions
+
+Drawing from behavioral finance and prospect theory:
+
+```python
+def prospect_theory_reward(portfolio_returns, benchmark_returns, lambda_gain=2.25, lambda_loss=2.25):
+    """
+    Prospect theory-based reward function
+    - Concave for gains (risk aversion)
+    - Convex for losses (risk seeking)
+    """
+    excess_returns = portfolio_returns - benchmark_returns
+
+    # Value function from prospect theory
+    gains = excess_returns[excess_returns >= 0]
+    losses = excess_returns[excess_returns < 0]
+
+    value = (gains ** 0.88).sum() - lambda_loss * (abs(losses) ** 0.88).sum()
+
+    # Normalize by time period
+    reward = value / len(portfolio_returns)
+
+    return reward
+```
+
+#### Risk-Adjusted Growth Measures
+
+```python
+def omega_ratio_reward(portfolio_returns, benchmark_returns, threshold=0.0):
+    """
+    Omega ratio - probability-weighted ratio of gains vs losses
+    """
+    excess_returns = portfolio_returns - benchmark_returns
+
+    gains = excess_returns[excess_returns > threshold]
+    losses = excess_returns[excess_returns <= threshold]
+
+    omega = gains.sum() / (abs(losses.sum()) + 1e-8)
+
+    return omega
+```
+
+### Mathematical Optimization of Reward Functions
+
+#### Bayesian Optimization Approach
+
+```python
+# Use Bayesian optimization to find optimal reward function weights
+from skopt import gp_minimize
+from skopt.space import Real
+
+def optimize_reward_weights(historical_data, validation_data):
+    """
+    Optimize reward function weights using Bayesian optimization
+    """
+
+    def objective(weights):
+        w_growth, w_risk, w_leverage, w_costs = weights
+
+        # Train policy with these weights
+        policy = train_with_weights(historical_data, weights)
+
+        # Evaluate on validation data
+        performance = evaluate_policy(policy, validation_data)
+
+        # Return negative Sharpe (minimization problem)
+        return -performance['sharpe']
+
+    # Search space
+    space = [
+        Real(0.1, 0.8, name='w_growth'),
+        Real(0.1, 0.8, name='w_risk'),
+        Real(0.0, 0.5, name='w_leverage'),
+        Real(0.0, 0.3, name='w_costs')
+    ]
+
+    # Constraint: weights must sum to 1
+    constraints = [{'type': 'eq', 'fun': lambda x: sum(x) - 1}]
+
+    result = gp_minimize(objective, space, constraints=constraints, n_calls=50)
+
+    return result.x
+```
+
+#### Reinforcement Learning for Reward Learning
+
+```python
+def learn_optimal_reward(historical_data, preference_data):
+    """
+    Learn reward function from human preferences or expert demonstrations
+    """
+
+    class RewardLearner(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.reward_net = nn.Sequential(
+                nn.Linear(state_dim, 128),
+                nn.ReLU(),
+                nn.Linear(128, 1)
+            )
+
+        def forward(self, portfolio_state):
+            return self.reward_net(portfolio_state)
+
+    # Use preference learning or inverse RL
+    # Compare trajectory pairs and learn reward function
+    # that explains expert preferences
+
+    reward_learner = RewardLearner()
+    optimizer = torch.optim.Adam(reward_learner.parameters())
+
+    for preference_pair in preference_data:
+        traj1, traj2 = preference_pair['preferred'], preference_pair['non_preferred']
+
+        reward1 = sum(reward_learner(state) for state in traj1)
+        reward2 = sum(reward_learner(state) for state in traj2)
+
+        # Preference loss: preferred trajectory should have higher reward
+        loss = torch.relu(reward2 - reward1 + margin)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+```
+
+#### Statistical Portfolio Optimization
+
+```python
+def statistical_reward_optimization(returns_data, risk_factors):
+    """
+    Use statistical methods to find optimal reward function parameters
+    """
+
+    # Estimate risk preferences from historical data
+    mu = returns_data.mean(axis=0)  # Expected returns
+    Sigma = returns_data.cov()       # Covariance matrix
+
+    # Use Black-Litterman model or similar to incorporate views
+    # Solve for optimal weights that maximize expected utility
+
+    def utility_function(weights, risk_aversion=2.0):
+        portfolio_return = weights @ mu
+        portfolio_risk = weights @ Sigma @ weights.T
+        return portfolio_return - risk_aversion * portfolio_risk
+
+    # Optimize weights
+    from scipy.optimize import minimize
+    constraints = [{'type': 'eq', 'fun': lambda x: sum(x) - 1}]
+    bounds = [(0, 1) for _ in range(len(mu))]
+
+    optimal_weights = minimize(
+        lambda w: -utility_function(w),
+        x0=np.ones(len(mu))/len(mu),
+        constraints=constraints,
+        bounds=bounds
+    )
+
+    return optimal_weights.x
+```
+
+### Potential Problems with Complex Reward Functions
+
+#### Optimization Challenges
+- **Multi-objective trade-offs**: Hard to balance competing objectives
+- **Local optima**: Complex reward surfaces create optimization difficulties
+- **Credit assignment**: Hard to attribute outcomes to specific decisions
+- **Sparse rewards**: Complex functions may provide weak learning signals
+
+#### Overfitting Risks
+- **Data mining bias**: Optimizing too many parameters on historical data
+- **Parameter sensitivity**: Small changes in weights can cause large behavioral changes
+- **Market regime dependency**: Optimal weights may not generalize across market conditions
+
+#### Computational Complexity
+- **Training time**: More complex rewards require more training iterations
+- **Numerical instability**: Complex combinations can cause gradient issues
+- **Debugging difficulty**: Hard to diagnose why a complex reward function fails
+
+#### Interpretability Loss
+- **Black box rewards**: Hard to understand what the agent is optimizing
+- **Counterintuitive behavior**: Agent may find unexpected ways to maximize complex rewards
+- **Validation challenges**: Hard to verify if complex rewards align with investment goals
+
+### Solutions and Best Practices
+
+#### Hierarchical Reward Design
+```python
+class HierarchicalReward:
+    def __init__(self):
+        self.base_rewards = {
+            'growth': SortinoReward(),
+            'risk': DrawdownPenalty(),
+            'costs': TransactionCostPenalty()
+        }
+        self.weights = {'growth': 0.5, 'risk': 0.3, 'costs': 0.2}
+
+    def compute(self, trajectory):
+        rewards = {}
+        for name, reward_fn in self.base_rewards.items():
+            rewards[name] = reward_fn.compute(trajectory)
+
+        # Combine with learned weights
+        total_reward = sum(self.weights[name] * rewards[name] for name in self.weights)
+
+        return total_reward, rewards  # Return both total and components
+```
+
+#### Curriculum Learning
+```python
+# Start simple, add complexity gradually
+curriculum_stages = [
+    {'reward': 'sharpe_only', 'epochs': 50},
+    {'reward': 'sharpe + drawdown', 'epochs': 100},
+    {'reward': 'full_multi_objective', 'epochs': 200}
+]
+
+for stage in curriculum_stages:
+    # Train with increasingly complex reward function
+    policy = train_with_reward_type(stage['reward'], epochs=stage['epochs'])
+```
+
+#### Regularization and Constraints
+```python
+def regularized_reward(portfolio_returns, complexity_penalty=0.01):
+    """
+    Add regularization to prevent overfitting to complex rewards
+    """
+    base_reward = multi_objective_reward(portfolio_returns)
+
+    # Add entropy regularization to encourage exploration
+    entropy_bonus = entropy_of_portfolio_weights(portfolio_returns)
+
+    # Add complexity penalty based on number of active constraints
+    complexity_cost = complexity_penalty * count_active_constraints()
+
+    return base_reward + entropy_bonus - complexity_cost
+```
+
+#### Validation and Monitoring
+```python
+def validate_reward_function(reward_fn, validation_data, out_of_sample_data):
+    """
+    Comprehensive validation of reward function design
+    """
+
+    # 1. In-sample performance
+    in_sample_perf = evaluate_reward(reward_fn, validation_data)
+
+    # 2. Out-of-sample robustness
+    oos_perf = evaluate_reward(reward_fn, out_of_sample_data)
+
+    # 3. Sensitivity analysis
+    sensitivities = test_parameter_sensitivity(reward_fn, validation_data)
+
+    # 4. Behavioral analysis
+    behaviors = analyze_portfolio_behavior(reward_fn, validation_data)
+
+    return {
+        'in_sample': in_sample_perf,
+        'out_of_sample': oos_perf,
+        'sensitivity': sensitivities,
+        'behavior': behaviors
+    }
+```
+
+### Implementation Recommendations
+
+#### Start Simple, Add Complexity Gradually
+```python
+# Phase 1: Single objective
+reward = excess_sharpe_ratio
+
+# Phase 2: Add risk management
+reward = 0.7 * excess_sharpe_ratio + 0.3 * (1 / max_drawdown)
+
+# Phase 3: Full specification
+reward = (0.4 * sortino_ratio +
+          0.3 * (1 / max_drawdown) +
+          0.2 * (1 / concentration) +
+          0.1 * (1 / transaction_costs))
+```
+
+#### Use Domain Knowledge
+- **Financial theory**: Base rewards on established portfolio theory
+- **Risk preferences**: Align with institutional investor requirements
+- **Practical constraints**: Include real-world trading limitations
+
+#### Continuous Monitoring and Adaptation
+```python
+# Regularly re-evaluate reward function performance
+# Adjust weights based on market conditions
+# Monitor for reward gaming behaviors
+# Update based on new research and market developments
+```
+
+### Mathematical Foundation for Optimal Reward Design
+
+The optimal reward function can be derived from **utility theory** and **stochastic control**:
+
+#### Expected Utility Maximization
+```
+U(w) = E[R(w)] - λ * Var[R(w)] + γ * Skew[R(w)] - δ * Kurt[R(w)]
+```
+
+Where:
+- `R(w)`: Portfolio returns given weights `w`
+- `λ`: Risk aversion parameter
+- `γ`: Preference for positive skewness
+- `δ`: Penalty for extreme events
+
+#### Dynamic Programming Solution
+```python
+# Bellman equation for optimal portfolio policy
+V_t(s) = max_a [ r(s,a) + γ * E[V_{t+1}(s') | s,a] ]
+
+# With reward function design
+r(s,a) = utility(portfolio_return) - transaction_costs - risk_penalties
+```
+
+#### Reinforcement Learning for Reward Learning
+```python
+# Use inverse RL or preference learning
+# Learn reward function that explains expert behavior
+# Iteratively refine based on performance feedback
+```
+
+The key insight is that **reward function design is an iterative process** requiring domain expertise, mathematical rigor, and empirical validation. Start with theory-grounded simple rewards, then gradually add complexity while continuously validating performance.
+
 ## Dependencies
 
 - `torch>=1.9.0`: Deep learning framework
